@@ -21,7 +21,7 @@ let selectedProductId = null;
 let userPhotoDataUrl = null;
 
 const LOADING_MESSAGES = [
-  "Scanning garment details…",
+  "Looking at the tracksuit…",
   "Matching fit to your photo…",
   "Rendering your preview…"
 ];
@@ -109,18 +109,48 @@ function handlePhotoFile(file) {
     return;
   }
 
-  const reader = new FileReader();
-  reader.onload = () => {
-    userPhotoDataUrl = reader.result;
-    dropzoneEmpty.hidden = true;
-    resultPreview.hidden = true;
-    photoPreview.hidden = false;
-    photoPreview.src = userPhotoDataUrl;
-    changePhotoBtn.hidden = false;
-    clearError();
-    updateTryOnButton();
-  };
-  reader.readAsDataURL(file);
+  resizeImageToDataUrl(file, 1440, 0.85)
+    .then((dataUrl) => {
+      userPhotoDataUrl = dataUrl;
+      dropzoneEmpty.hidden = true;
+      resultPreview.hidden = true;
+      photoPreview.hidden = false;
+      photoPreview.src = userPhotoDataUrl;
+      changePhotoBtn.hidden = false;
+      clearError();
+      updateTryOnButton();
+    })
+    .catch(() => showError("Could not read that photo. Please try another file."));
+}
+
+// Downscale + re-compress the photo in-browser before it's sent to the
+// server. Phone photos can be 5-10MB; keeping the upload small avoids
+// timeouts and memory limits on the backend.
+function resizeImageToDataUrl(file, maxDimension, quality) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Invalid image"));
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDimension || height > maxDimension) {
+          const scale = maxDimension / Math.max(width, height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 changePhotoBtn.addEventListener("click", (e) => {
@@ -160,7 +190,11 @@ async function runTryOn() {
     resultPreview.hidden = false;
     resultPreview.src = data.image;
   } catch (err) {
-    showError(err.message);
+    if (err.message === "Failed to fetch") {
+      showError("Could not reach the server. Please check your connection and try again — if it keeps happening, try a smaller photo.");
+    } else {
+      showError(err.message);
+    }
   } finally {
     setLoading(false);
   }
@@ -169,7 +203,7 @@ async function runTryOn() {
 function setLoading(isLoading) {
   loadingOverlay.hidden = !isLoading;
   tryOnBtn.disabled = isLoading || !(selectedProductId && userPhotoDataUrl);
-  tryOnBtn.textContent = isLoading ? "✦ Stitching…" : "✦ Stitch on me";
+  tryOnBtn.textContent = isLoading ? "✦ Generating…" : "✦ Try it on me";
 
   if (isLoading) {
     let i = 0;
